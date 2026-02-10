@@ -4,9 +4,9 @@
     path: /usr/local/bin/k3s
   register: k3s_binary
 
-- name: Install K3s with Calico-ready config
+- name: Install K3s binary and create service
   shell: |
-    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{ k3s_version }}" sh -s - server \
+    curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
       --flannel-backend=none \
       --disable-network-policy \
       --disable=traefik \
@@ -17,16 +17,24 @@
       --write-kubeconfig-mode=0644 \
       --tls-san={{ ansible_host }} \
       --token={{ k3s_token }} \
-      --protect-kernel-defaults=true \
       --secrets-encryption=true \
-      --kube-apiserver-arg="audit-log-path=/var/log/k3s-audit.log" \
-      --kube-apiserver-arg="audit-log-maxage=30" \
-      --kube-apiserver-arg="audit-log-maxbackup=10" \
-      --kube-apiserver-arg="audit-log-maxsize=100" \
-      --kube-apiserver-arg="anonymous-auth=false" \
-      --kube-apiserver-arg="authorization-mode=RBAC,Node"
+      --kube-apiserver-arg=audit-log-path=/var/log/k3s-audit.log \
+      --kube-apiserver-arg=audit-log-maxage=30 \
+      --kube-apiserver-arg=audit-log-maxbackup=10 \
+      --kube-apiserver-arg=audit-log-maxsize=100 \
+      --kube-apiserver-arg=anonymous-auth=false \
+      --kube-apiserver-arg=authorization-mode=RBAC,Node" \
+    INSTALL_K3S_VERSION="{{ k3s_version }}" sh -s -
   when: not k3s_binary.stat.exists
   register: k3s_install
+  ignore_errors: true
+
+- name: Wait for K3s service to start
+  shell: systemctl is-active k3s
+  register: k3s_service
+  retries: 12
+  delay: 10
+  until: k3s_service.rc == 0
 
 - name: Wait for K3s to be ready
   shell: k3s kubectl get nodes
@@ -48,12 +56,6 @@
     remote_src: yes
     mode: "0600"
 
-- name: Install Helm
-  shell: |
-    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-  args:
-    creates: /usr/local/bin/helm
-
 - name: Fetch kubeconfig to local machine
   fetch:
     src: /etc/rancher/k3s/k3s.yaml
@@ -62,8 +64,9 @@
   register: fetched_kubeconfig
 
 - name: Update kubeconfig server address
-  local_action:
-    module: replace
+  delegate_to: localhost
+  become: no
+  ansible.builtin.replace:
     path: "{{ playbook_dir }}/../kubeconfig.yaml"
     regexp: 'https://127.0.0.1:6443'
     replace: "https://{{ ansible_host }}:6443"
