@@ -1,0 +1,89 @@
+---
+- name: Add Kong Helm repository
+  shell: helm repo add kong https://charts.konghq.com && helm repo update
+  register: helm_repo
+
+- name: Create Kong namespace
+  shell: k3s kubectl create namespace {{ kong_namespace }} --dry-run=client -o yaml | k3s kubectl apply -f -
+
+- name: Install Gateway API CRDs
+  shell: k3s kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/standard-install.yaml
+
+- name: Install Kong Ingress Controller via Helm
+  shell: |
+    helm upgrade --install kong kong/ingress \
+      --namespace {{ kong_namespace }} \
+      --set controller.ingressController.env.log_level=info \
+      --set gateway.proxy.type=NodePort \
+      --set gateway.proxy.http.nodePort=30080 \
+      --set gateway.proxy.tls.nodePort=30443 \
+      --kubeconfig /etc/rancher/k3s/k3s.yaml \
+      --wait --timeout 300s
+  register: kong_install
+
+- name: Wait for Kong pods to be ready
+  shell: |
+    k3s kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=kong -n {{ kong_namespace }} --timeout=300s
+  retries: 5
+  delay: 30
+  register: kong_ready
+  until: kong_ready.rc == 0
+
+- name: Apply Kong network policy - allow ingress traffic
+  shell: |
+    cat <<'EOF' | k3s kubectl apply -f -
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: allow-kong-ingress
+      namespace: {{ kong_namespace }}
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: kong
+      ingress:
+        - ports:
+            - protocol: TCP
+              port: 80
+            - protocol: TCP
+              port: 443
+            - protocol: TCP
+              port: 8000
+            - protocol: TCP
+              port: 8443
+      policyTypes:
+        - Ingress
+    EOF
+
+- name: Apply Kong rate-limiting plugin
+  shell: |
+    cat <<'EOF' | k3s kubectl apply -f -
+    apiVersion: configuration.konghq.com/v1
+    kind: KongClusterPlugin
+    metadata:
+      name: global-rate-limit
+      annotations:
+        kubernetes.io/ingress.class: kong
+      labels:
+        global: "true"
+    config:
+      minute: 60
+      policy: local
+    plugin: rate-limiting
+    EOF
+
+- name: Verify Kong installation
+  shell: k3s kubectl get pods -n {{ kong_namespace }} -o wide
+  register: kong_status
+
+- name: Show Kong status
+  debug:
+    var: kong_status.stdout_lines
+
+- name: Get Kong proxy service
+  shell: k3s kubectl get svc -n {{ kong_namespace }}
+  register: kong_svc
+
+- name: Show Kong services
+  debug:
+    var: kong_svc.stdout_lines

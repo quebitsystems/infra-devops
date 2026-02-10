@@ -1,0 +1,63 @@
+---
+- name: Wait for K3s API to be available
+  shell: k3s kubectl cluster-info
+  register: cluster_info
+  retries: 10
+  delay: 10
+  until: cluster_info.rc == 0
+
+- name: Apply Calico manifest
+  shell: k3s kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml
+  register: calico_install
+
+- name: Wait for Calico pods to be ready
+  shell: |
+    k3s kubectl wait --for=condition=ready pod -l k8s-app=calico-node -n kube-system --timeout=300s
+  retries: 5
+  delay: 30
+  register: calico_ready
+  until: calico_ready.rc == 0
+
+- name: Wait for Calico kube-controllers
+  shell: |
+    k3s kubectl wait --for=condition=ready pod -l k8s-app=calico-kube-controllers -n kube-system --timeout=300s
+  retries: 5
+  delay: 15
+  register: calico_controllers
+  until: calico_controllers.rc == 0
+
+- name: Apply default-deny ingress network policy
+  shell: |
+    cat <<'EOF' | k3s kubectl apply -f -
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: default-deny-ingress
+      namespace: default
+    spec:
+      podSelector: {}
+      policyTypes:
+        - Ingress
+    EOF
+
+- name: Apply default-deny egress network policy
+  shell: |
+    cat <<'EOF' | k3s kubectl apply -f -
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: default-deny-egress
+      namespace: default
+    spec:
+      podSelector: {}
+      policyTypes:
+        - Egress
+    EOF
+
+- name: Verify Calico installation
+  shell: k3s kubectl get pods -n kube-system -l k8s-app=calico-node -o wide
+  register: calico_status
+
+- name: Show Calico status
+  debug:
+    var: calico_status.stdout_lines

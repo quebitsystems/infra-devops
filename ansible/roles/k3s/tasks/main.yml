@@ -1,0 +1,70 @@
+---
+- name: Check if K3s is already installed
+  stat:
+    path: /usr/local/bin/k3s
+  register: k3s_binary
+
+- name: Install K3s with Calico-ready config
+  shell: |
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{ k3s_version }}" sh -s - server \
+      --flannel-backend=none \
+      --disable-network-policy \
+      --disable=traefik \
+      --disable=servicelb \
+      --cluster-cidr={{ cluster_cidr }} \
+      --service-cidr={{ service_cidr }} \
+      --cluster-dns={{ cluster_dns }} \
+      --write-kubeconfig-mode=0644 \
+      --tls-san={{ ansible_host }} \
+      --token={{ k3s_token }} \
+      --protect-kernel-defaults=true \
+      --secrets-encryption=true \
+      --kube-apiserver-arg="audit-log-path=/var/log/k3s-audit.log" \
+      --kube-apiserver-arg="audit-log-maxage=30" \
+      --kube-apiserver-arg="audit-log-maxbackup=10" \
+      --kube-apiserver-arg="audit-log-maxsize=100" \
+      --kube-apiserver-arg="anonymous-auth=false" \
+      --kube-apiserver-arg="authorization-mode=RBAC,Node"
+  when: not k3s_binary.stat.exists
+  register: k3s_install
+
+- name: Wait for K3s to be ready
+  shell: k3s kubectl get nodes
+  register: k3s_nodes
+  retries: 30
+  delay: 10
+  until: k3s_nodes.rc == 0
+
+- name: Create .kube directory
+  file:
+    path: /root/.kube
+    state: directory
+    mode: "0700"
+
+- name: Copy kubeconfig
+  copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: /root/.kube/config
+    remote_src: yes
+    mode: "0600"
+
+- name: Install Helm
+  shell: |
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+
+- name: Fetch kubeconfig to local machine
+  fetch:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "{{ playbook_dir }}/../kubeconfig.yaml"
+    flat: yes
+  register: fetched_kubeconfig
+
+- name: Update kubeconfig server address
+  local_action:
+    module: replace
+    path: "{{ playbook_dir }}/../kubeconfig.yaml"
+    regexp: 'https://127.0.0.1:6443'
+    replace: "https://{{ ansible_host }}:6443"
+  when: fetched_kubeconfig.changed

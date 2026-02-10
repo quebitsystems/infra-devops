@@ -1,0 +1,156 @@
+---
+- name: Update and upgrade apt packages
+  apt:
+    update_cache: yes
+    upgrade: dist
+    cache_valid_time: 3600
+
+- name: Install essential security packages
+  apt:
+    name:
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - apt-listchanges
+      - logwatch
+      - apparmor
+      - apparmor-utils
+      - curl
+      - wget
+      - gnupg2
+      - ca-certificates
+      - open-iscsi
+      - nfs-common
+    state: present
+
+- name: Configure UFW defaults
+  ufw:
+    direction: "{{ item.direction }}"
+    policy: "{{ item.policy }}"
+  loop:
+    - { direction: incoming, policy: deny }
+    - { direction: outgoing, policy: allow }
+
+- name: Allow SSH through UFW
+  ufw:
+    rule: allow
+    port: "{{ ssh_port }}"
+    proto: tcp
+
+- name: Allow K3s API server
+  ufw:
+    rule: allow
+    port: "6443"
+    proto: tcp
+
+- name: Allow Calico BGP
+  ufw:
+    rule: allow
+    port: "179"
+    proto: tcp
+
+- name: Allow Calico VXLAN
+  ufw:
+    rule: allow
+    port: "4789"
+    proto: udp
+
+- name: Allow Calico Typha
+  ufw:
+    rule: allow
+    port: "5473"
+    proto: tcp
+
+- name: Allow Calico wireguard
+  ufw:
+    rule: allow
+    port: "51820:51821"
+    proto: udp
+
+- name: Allow Kubelet
+  ufw:
+    rule: allow
+    port: "10250"
+    proto: tcp
+
+- name: Allow HTTP/HTTPS for Kong Ingress
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "80"
+    - "443"
+
+- name: Allow NodePort range
+  ufw:
+    rule: allow
+    port: "30000:32767"
+    proto: tcp
+
+- name: Enable UFW
+  ufw:
+    state: enabled
+
+- name: Configure fail2ban for SSH
+  copy:
+    dest: /etc/fail2ban/jail.local
+    content: |
+      [DEFAULT]
+      bantime = 3600
+      findtime = 600
+      maxretry = 3
+
+      [sshd]
+      enabled = true
+      port = {{ ssh_port }}
+      filter = sshd
+      logpath = /var/log/auth.log
+      maxretry = 3
+      bantime = 3600
+    mode: "0644"
+  notify: restart fail2ban
+
+- name: Harden sysctl settings
+  sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_set: yes
+    reload: yes
+  loop:
+    - { key: "net.ipv4.ip_forward", value: "1" }
+    - { key: "net.ipv6.conf.all.forwarding", value: "1" }
+    - { key: "net.ipv4.conf.all.rp_filter", value: "1" }
+    - { key: "net.ipv4.conf.default.rp_filter", value: "1" }
+    - { key: "net.ipv4.icmp_echo_ignore_broadcasts", value: "1" }
+    - { key: "net.ipv4.conf.all.accept_redirects", value: "0" }
+    - { key: "net.ipv4.conf.default.accept_redirects", value: "0" }
+    - { key: "net.ipv4.conf.all.send_redirects", value: "0" }
+    - { key: "net.ipv4.conf.default.send_redirects", value: "0" }
+    - { key: "net.ipv4.conf.all.accept_source_route", value: "0" }
+    - { key: "net.ipv4.conf.default.accept_source_route", value: "0" }
+    - { key: "net.ipv4.tcp_syncookies", value: "1" }
+    - { key: "kernel.randomize_va_space", value: "2" }
+    - { key: "fs.protected_hardlinks", value: "1" }
+    - { key: "fs.protected_symlinks", value: "1" }
+
+- name: Configure automatic security updates
+  copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+    mode: "0644"
+
+- name: Enable and start fail2ban
+  systemd:
+    name: fail2ban
+    enabled: yes
+    state: started
+
+handlers:
+  - name: restart fail2ban
+    systemd:
+      name: fail2ban
+      state: restarted

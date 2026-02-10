@@ -1,0 +1,22 @@
+---
+# K3s Configuration
+k3s_version: "v1.31.4+k3s1"
+k3s_token: "{{ lookup('env', 'K3S_TOKEN') | default('changeme-generate-secure-token', true) }}"
+cluster_cidr: "10.42.0.0/16"
+service_cidr: "10.43.0.0/16"
+cluster_dns: "10.43.0.10"
+
+# Calico Configuration
+calico_version: "v3.30.2"
+
+# Kong Configuration
+kong_namespace: "kong"
+
+# Security
+ssh_port: 22
+allowed_ssh_cidrs:
+  - "0.0.0.0/0"
+
+# Server
+server_hostname: "mykm3"
+server_timezone: "Europe/Berlin"

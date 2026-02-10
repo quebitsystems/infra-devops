@@ -1,0 +1,50 @@
+---
+# Bootstrap Playbook: Secure K3s + Calico + Kong
+# Usage: ansible-playbook -i inventory/hosts.ini site.yml
+
+- name: Bootstrap Secure K3s Cluster
+  hosts: k3s_servers
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - role: hardening
+      tags: [hardening, security]
+
+    - role: k3s
+      tags: [k3s, kubernetes]
+
+    - role: calico
+      tags: [calico, cni, networking]
+
+    - role: kong
+      tags: [kong, ingress, gateway]
+
+  post_tasks:
+    - name: Show cluster status
+      shell: k3s kubectl get nodes -o wide
+      register: final_nodes
+
+    - name: Display cluster nodes
+      debug:
+        var: final_nodes.stdout_lines
+
+    - name: Show all pods
+      shell: k3s kubectl get pods -A
+      register: all_pods
+
+    - name: Display all pods
+      debug:
+        var: all_pods.stdout_lines
+
+    - name: Bootstrap complete
+      debug:
+        msg: |
+          ============================================
+          K3s Cluster Bootstrap Complete!
+          --------------------------------------------
+          API Server: https://{{ ansible_host }}:6443
+          Kong HTTP:  http://{{ ansible_host }}:30080
+          Kong HTTPS: https://{{ ansible_host }}:30443
+          Kubeconfig: kubeconfig.yaml (local)
+          ============================================
