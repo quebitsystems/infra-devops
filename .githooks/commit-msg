@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Enforce Co-Authored-By: Claude in every commit message
+
+COMMIT_MSG_FILE="$1"
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+if ! echo "$COMMIT_MSG" | grep -qiE "Co-Authored-By:.*Claude"; then
+  echo ""
+  echo "ERROR: Commit rejected."
+  echo "All commits must include the Claude co-author trailer:"
+  echo ""
+  echo '  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>'
+  echo ""
+  exit 1
+fi
+
+exit 0

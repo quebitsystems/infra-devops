@@ -1,0 +1,43 @@
+name: Enforce Claude Co-Author
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-coauthor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check commits for Claude co-author tag
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            COMMITS=$(git log --format="%H" origin/${{ github.base_ref }}..${{ github.sha }})
+          else
+            COMMITS=$(git log --format="%H" -1)
+          fi
+
+          FAILED=0
+          for SHA in $COMMITS; do
+            MSG=$(git log --format="%B" -1 "$SHA")
+            if ! echo "$MSG" | grep -qiE "Co-Authored-By:.*Claude"; then
+              echo "FAIL: Commit $SHA missing Claude co-author tag"
+              FAILED=1
+            else
+              echo "OK:   $SHA"
+            fi
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "All commits must include:"
+            echo '  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>'
+            exit 1
+          fi
+
+          echo "All commits verified."
